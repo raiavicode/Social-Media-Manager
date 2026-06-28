@@ -136,15 +136,48 @@ function Lbl({children,color}){
   return <p style={{color:color||T3,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:1,margin:"0 0 6px"}}>{children}</p>;
 }
 
+function safeParseJSON(text){
+  // Extract the JSON object from the response
+  const m=text.match(/\{[\s\S]*\}/);
+  if(!m) return null;
+  let s=m[0];
+  try{return JSON.parse(s);}catch(e1){
+    // Fix 1: remove trailing commas before } or ]
+    s=s.replace(/,(\s*[}\]])/g,"$1");
+    try{return JSON.parse(s);}catch(e2){
+      // Fix 2: replace smart/curly quotes with straight quotes
+      s=s.replace(/[\u2018\u2019]/g,"'").replace(/[\u201C\u201D]/g,'"');
+      try{return JSON.parse(s);}catch(e3){
+        // Fix 3: remove newlines inside string values
+        s=s.replace(/"([^"]*)"/g,function(_,p){return '"'+p.replace(/\n/g,' ').replace(/\r/g,'')+'"';});
+        try{return JSON.parse(s);}catch(e4){
+          // Fix 4: truncate to last complete top-level field and close the object
+          const lastComma=s.lastIndexOf(',"');
+          if(lastComma>0){
+            s=s.substring(0,lastComma)+"}";
+            try{return JSON.parse(s);}catch(e5){}
+          }
+          // Fix 5: use Function eval as last resort (safe — only our own API data)
+          try{return Function('"use strict";return ('+s+')')();}catch(e6){
+            console.error("JSON parse failed after all fixes:",e6.message);
+            return null;
+          }
+        }
+      }
+    }
+  }
+}
+
 async function callClaude(sys,user,search){
-  const body={model:"claude-sonnet-4-6",max_tokens:1000,system:sys,messages:[{role:"user",content:user}]};
+  const body={model:"claude-sonnet-4-6",max_tokens:4000,system:sys,messages:[{role:"user",content:user}]};
   if(search) body.tools=[{type:"web_search_20250305",name:"web_search"}];
   const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const data=await res.json();
   if(data.error) throw new Error(data.error.message);
   const text=(data.content||[]).filter(function(b){return b.type==="text";}).map(function(b){return b.text;}).join("");
-  const m=text.match(/\{[\s\S]*\}/);
-  return m?JSON.parse(m[0]):null;
+  const parsed=safeParseJSON(text);
+  if(!parsed) throw new Error("Could not parse AI response. Please try again.");
+  return parsed;
 }
 
 function Avatar({account,size,onClick}){
